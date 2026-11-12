@@ -86,11 +86,15 @@ All three always return a JSON string; a bad path or invalid regex returns
   is passed through the same check Core's `read_file` uses, so credential
   stores, internal caches and `.env` files are refused — logmine can't be used
   to read what the host protects.
+- **Regular files only.** Like Core's `read_file`, paths under `/proc` and `/dev`
+  (including symlinks that resolve there) are refused, and so is anything that
+  isn't a regular file — FIFOs, sockets and devices — before the file is opened.
 - **No network, no credentials, no telemetry, no background processes, no
   self-update.** Standard library only.
-- A single call stops after 5,000,000 lines, truncates lines over 100,000 chars,
-  and caps distinct templates at 50,000 — all flagged in the result — so runtime
-  and memory stay bounded. A pathological regex you pass to `log_grep` on a huge
+- A single call stops after 5,000,000 lines, truncates lines over 100,000 chars
+  (reading them in bounded pieces, so a huge file with no newlines is never held
+  in memory whole), and caps distinct templates at 50,000 — all flagged in the
+  result — so runtime and memory stay bounded. A pathological regex you pass to `log_grep` on a huge
   file can still be slow; that is the only sharp edge.
 
 ## Install

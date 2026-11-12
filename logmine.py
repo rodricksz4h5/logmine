@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 from collections import Counter
 from datetime import datetime
 from typing import Any, Optional
@@ -151,20 +152,60 @@ def _resolve(path: Any) -> str:
     blocked = _read_block_error(os.path.abspath(path))
     if blocked:
         raise ValueError(blocked)
-    if not os.path.exists(path):
-        raise ValueError(f"File not found: {path}")
-    if os.path.isdir(path):
+    # Both checks run before anything is opened; stat() does not open the file.
+    if _under_refused_root(path):
+        raise ValueError(f"Refusing to read {path}: device and /proc paths are not log files")
+    try:
+        mode = os.stat(path).st_mode
+    except FileNotFoundError:
+        raise ValueError(f"File not found: {path}") from None
+    except OSError as exc:
+        raise ValueError(f"Cannot access {path}: {exc.strerror or exc}") from None
+    if stat.S_ISDIR(mode):
         raise ValueError(f"Path is a directory, not a file: {path}")
+    if not stat.S_ISREG(mode):
+        raise ValueError(f"Refusing to read {path}: not a regular file")
     return path
+
+
+# Like Hermes' read_file, never read device, fd or process files: they can block
+# forever (/dev/zero, a FIFO) or leak process state (/proc/<pid>/environ).
+_REFUSED_ROOTS = ("/proc", "/dev")
+
+
+def _under_refused_root(path: str) -> bool:
+    """True if the path, or the file a symlink resolves to, is under /proc or /dev."""
+    candidates = [os.path.abspath(path)]
+    try:
+        candidates.append(os.path.realpath(path))
+    except (OSError, ValueError):
+        pass
+    return any(
+        candidate == root or candidate.startswith(root + "/")
+        for candidate in candidates
+        for root in _REFUSED_ROOTS
+    )
 
 
 def _iter_lines(path: str):
     # Default (universal) newline mode normalises \r\n and lone \r to \n, so no
     # stray carriage return reaches the regex on CRLF logs.
+    # readline(limit) keeps memory bounded: an over-long line is cut to
+    # MAX_LINE_CHARS and the rest of it is skipped in bounded pieces, so a huge
+    # file with no newlines is never held in memory whole.
     with open(path, "r", encoding="utf-8", errors="replace") as handle:
-        for lineno, line in enumerate(handle, start=1):
-            if len(line) > MAX_LINE_CHARS:
-                line = line[:MAX_LINE_CHARS]
+        lineno = 0
+        while True:
+            line = handle.readline(MAX_LINE_CHARS + 1)
+            if not line:
+                return
+            lineno += 1
+            if len(line) > MAX_LINE_CHARS and not line.endswith("\n"):
+                rest = line
+                while rest and not rest.endswith("\n"):
+                    rest = handle.readline(MAX_LINE_CHARS)
+                yield lineno, line[:MAX_LINE_CHARS]
+                continue
             yield lineno, line.rstrip("\n")
 
 
