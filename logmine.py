@@ -122,10 +122,35 @@ def _normalize_template(line: str) -> str:
 
 
 # --- IO ---------------------------------------------------------------------------
+def _read_block_error(abs_path: str) -> Any:
+    """Honour Hermes' read denylist when running inside the agent.
+
+    The host refuses reads of its credential stores, internal skill-hub caches
+    and project ``.env`` files; logmine must not become a side channel around
+    that guard (e.g. ``log_grep`` over ``~/.hermes/.env``). We defer to the same
+    check Core's ``read_file`` uses. Outside a Hermes runtime (standalone tests)
+    the module is absent and there is no denylist to apply, so the check no-ops,
+    mirroring Core's own best-effort posture in ``raise_if_read_blocked``.
+    """
+    try:
+        from agent.file_safety import get_read_block_error
+    except Exception:
+        return None
+    try:
+        return get_read_block_error(abs_path)
+    except Exception:
+        return None
+
+
 def _resolve(path: Any) -> str:
     if not isinstance(path, str) or not path.strip():
         raise ValueError("No file path provided")
     path = os.path.expanduser(path)
+    # Apply Hermes' read denylist before touching the filesystem, so a blocked
+    # path never reveals even its existence.
+    blocked = _read_block_error(os.path.abspath(path))
+    if blocked:
+        raise ValueError(blocked)
     if not os.path.exists(path):
         raise ValueError(f"File not found: {path}")
     if os.path.isdir(path):

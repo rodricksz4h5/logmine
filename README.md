@@ -82,6 +82,10 @@ All three always return a JSON string; a bad path or invalid regex returns
 
 - **Reads only the file path you pass**, read-only. Never writes, deletes, or
   touches any other path.
+- **Honours Hermes' read denylist.** When running inside the agent, every path
+  is passed through the same check Core's `read_file` uses, so credential
+  stores, internal caches and `.env` files are refused — logmine can't be used
+  to read what the host protects.
 - **No network, no credentials, no telemetry, no background processes, no
   self-update.** Standard library only.
 - A single call stops after 5,000,000 lines, truncates lines over 100,000 chars,
